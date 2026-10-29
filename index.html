@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Input Foto Audit</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--tx:#1d2733;--mut:#667085;--bd:#dde2e8;--pri:#0b5fff;--ok:#12805c;--err:#c0392b}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--tx);line-height:1.45}
+header{background:var(--pri);color:#fff;padding:18px 16px}
+header h1{margin:0;font-size:1.2rem}header p{margin:4px 0 0;font-size:.85rem;opacity:.9}
+main{max-width:760px;margin:0 auto;padding:14px}
+.box{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:14px}
+h2{font-size:1rem;margin:0 0 6px}
+label{display:block;font-size:.8rem;font-weight:600;color:var(--mut);margin:10px 0 4px}
+input,select,textarea{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;font:inherit;background:#fff;color:var(--tx)}
+textarea{min-height:64px;resize:vertical}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:520px){.row{grid-template-columns:1fr}}
+button{background:var(--pri);color:#fff;border:0;border-radius:10px;padding:13px;font:inherit;font-weight:700;width:100%;cursor:pointer}
+button.sec{background:#e5eeff;color:var(--pri);width:auto;padding:8px 14px;font-size:.85rem}
+button:disabled{opacity:.55;cursor:default}
+.pick{border:2px dashed var(--bd);border-radius:10px;padding:18px;text-align:center;color:var(--mut);position:relative;cursor:pointer}
+.pick input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.prev{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px;margin-top:10px}
+.prev div{position:relative}.prev img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;display:block}
+.prev b{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.65);color:#fff;border-radius:99px;width:22px;height:22px;text-align:center;line-height:22px;font-size:.8rem;cursor:pointer}
+#bar{height:8px;background:#e5e9ef;border-radius:99px;overflow:hidden;margin-top:10px;display:none}
+#bar i{display:block;height:100%;width:0;background:var(--ok);transition:width .3s}
+#msg{font-size:.85rem;margin-top:8px;text-align:center}
+.warn{background:#fde7e4;color:var(--err);padding:10px;border-radius:8px;font-size:.85rem;margin-bottom:14px;display:none}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-top:10px}
+.g{border:1px solid var(--bd);border-radius:10px;overflow:hidden;background:#fff}
+.g img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#eef1f5}
+.g div{padding:8px 10px;font-size:.8rem}.g small{color:var(--mut);display:block}
+.t{display:inline-block;font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:99px;margin-bottom:4px}
+.t.Before{background:#fff1d6;color:#9a6700}.t.After{background:#dff5ec;color:var(--ok)}
+.hide{display:none}
+</style>
+</head>
+<body>
+<header><h1>📋 Input Foto Audit</h1><p>Pilih lokasi audit, isi data, lalu unggah foto. Foto otomatis masuk ke spreadsheet.</p></header>
+<main>
+<div class="warn" id="warn">⚠️ URL Apps Script belum diisi. Buka index.html lalu isi <b>APPS_SCRIPT_URL</b>.</div>
+
+<div class="box">
+  <h2>1. Pilih Lokasi Audit</h2>
+  <select id="lokasi"></select>
+</div>
+
+<div class="box hide" id="form">
+  <h2>2. Data Audit</h2>
+  <label for="auditor">Nama Auditor</label><input id="auditor" placeholder="Nama Anda">
+  <div class="row">
+    <div><label for="tgl">Tanggal Audit</label><input type="date" id="tgl"></div>
+    <div><label for="jam">Jam</label><input type="time" id="jam"></div>
+  </div>
+  <div class="row">
+    <div><label for="tahap">Jenis Foto</label><select id="tahap"><option>Before</option><option>After</option></select></div>
+    <div><label for="item">Item / Area</label><select id="item"></select></div>
+  </div>
+  <label>Foto (bisa pilih lebih dari satu)</label>
+  <div class="pick">📷 Ketuk untuk ambil foto / pilih dari galeri<input type="file" id="file" accept="image/*" multiple></div>
+  <div class="prev" id="prev"></div>
+  <label for="cat">Catatan (opsional)</label><textarea id="cat" placeholder="Kondisi / temuan di area ini..."></textarea>
+  <div style="margin-top:12px"><button id="kirim">Kirim ke Spreadsheet</button></div>
+  <div id="bar"><i></i></div><div id="msg"></div>
+</div>
+
+<div class="box hide" id="gal">
+  <div class="top"><h2 id="galT">Galeri</h2><button class="sec" id="reload">↻ Muat ulang</button></div>
+  <div class="grid" id="grid"></div>
+</div>
+</main>
+<script>
+// ====== GANTI DENGAN URL WEB APP APPS SCRIPT ANDA (berakhiran /exec) ======
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw4mMeLHyILPs0Cv8oMVQHi4u2uueG8fXRLuhFzu6bjW9-pq7HyFhuE7-GeDx1qNgPw/exec";
+// Daftar lokasi & item dibaca otomatis dari tab "Master_Lokasi" di spreadsheet (tidak perlu edit HTML).
+let LOKASI = {};
+const $ = s => document.querySelector(s);
+let fotos = [];
+const esc = t => String(t == null ? "" : t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const ready = APPS_SCRIPT_URL.startsWith("http");
+$("#warn").style.display = ready ? "none" : "block";
+
+async function loadLokasi() {
+  $("#lokasi").innerHTML = '<option value="">Memuat lokasi…</option>';
+  try {
+    const j = await (await fetch(APPS_SCRIPT_URL + "?mode=lokasi")).json();
+    if (!j.ok) throw new Error(j.error);
+    LOKASI = j.lokasi;
+    const n = Object.keys(LOKASI);
+    $("#lokasi").innerHTML = '<option value="">-- Pilih lokasi --</option>' + n.map(l => `<option>${esc(l)}</option>`).join("");
+    if (!n.length) $("#lokasi").innerHTML = '<option value="">Master_Lokasi masih kosong</option>';
+  } catch (e) { $("#lokasi").innerHTML = '<option value="">Gagal memuat lokasi – muat ulang halaman</option>'; }
+}
+$("#lokasi").innerHTML = '<option value="">-- Pilih lokasi --</option>';
+if (ready) loadLokasi();
+$("#auditor").value = localStorage.getItem("auditor") || "";
+function now() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  $("#tgl").value = d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  $("#jam").value = p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+$("#lokasi").onchange = () => {
+  const l = $("#lokasi").value;
+  $("#form").classList.toggle("hide", !l); $("#gal").classList.toggle("hide", !l);
+  if (!l) return;
+  $("#item").innerHTML = LOKASI[l].map(i => `<option>${esc(i)}</option>`).join("");
+  $("#galT").textContent = "Galeri – " + l;
+  fotos = []; showPrev(); now(); loadGal();
+};
+
+function compress(file, max = 1280, q = 0.72) {
+  return new Promise((res, rej) => {
+    const r = new FileReader(); r.onerror = rej;
+    r.onload = () => {
+      const im = new Image(); im.onerror = rej;
+      im.onload = () => {
+        const s = Math.min(1, max / Math.max(im.width, im.height)), c = document.createElement("canvas");
+        c.width = im.width * s; c.height = im.height * s;
+        c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+        res(c.toDataURL("image/jpeg", q));
+      };
+      im.src = r.result;
+    };
+    r.readAsDataURL(file);
+  });
+}
+$("#file").onchange = async e => {
+  for (const f of e.target.files) fotos.push(await compress(f));
+  e.target.value = ""; showPrev();
+};
+function showPrev() {
+  $("#prev").innerHTML = fotos.map((f, i) => `<div><img src="${f}"><b onclick="fotos.splice(${i},1);showPrev()">×</b></div>`).join("");
+}
+
+async function loadGal() {
+  const l = $("#lokasi").value; if (!l || !ready) return;
+  $("#grid").innerHTML = "<small>Memuat…</small>";
+  try {
+    const j = await (await fetch(APPS_SCRIPT_URL + "?lokasi=" + encodeURIComponent(l))).json();
+    if (!j.ok) throw new Error(j.error);
+    $("#grid").innerHTML = j.data.length ? j.data.map(r => `<div class="g">
+      <a href="${esc(r.link)}" target="_blank" rel="noopener"><img loading="lazy" src="https://drive.google.com/thumbnail?id=${esc(r.id)}&sz=w500" alt=""></a>
+      <div><span class="t ${esc(r.tahap)}">${esc(r.tahap)}</span><b> ${esc(r.item)}</b>
+      <small>${esc(r.tanggal)} • ${esc(r.jam)} • ${esc(r.auditor)}</small>${r.catatan ? `<small>${esc(r.catatan)}</small>` : ""}</div></div>`).join("")
+      : "<small>Belum ada foto untuk lokasi ini.</small>";
+  } catch (e) { $("#grid").innerHTML = "<small>Gagal memuat galeri: " + esc(e.message) + "</small>"; }
+}
+$("#reload").onclick = loadGal;
+
+$("#kirim").onclick = async () => {
+  const msg = $("#msg"), auditor = $("#auditor").value.trim();
+  if (!ready) { msg.textContent = "URL Apps Script belum diisi."; return; }
+  if (!auditor) { msg.textContent = "Isi nama auditor dulu."; return; }
+  if (!fotos.length) { msg.textContent = "Pilih minimal satu foto."; return; }
+  localStorage.setItem("auditor", auditor);
+  $("#kirim").disabled = true; $("#bar").style.display = "block"; msg.textContent = "";
+  const base = { lokasi: $("#lokasi").value, tanggal: $("#tgl").value, jam: $("#jam").value, auditor, tahap: $("#tahap").value, item: $("#item").value, catatan: $("#cat").value.trim() };
+  let ok = 0; const sisa = [];
+  for (let i = 0; i < fotos.length; i++) {
+    try {
+      const j = await (await fetch(APPS_SCRIPT_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ ...base, foto: fotos[i] }) })).json();
+      if (!j.ok) throw new Error(j.error);
+      ok++;
+    } catch (e) { sisa.push(fotos[i]); console.error(e); }
+    $("#bar i").style.width = ((i + 1) / fotos.length * 100) + "%";
+  }
+  fotos = sisa; showPrev(); $("#kirim").disabled = false;
+  msg.textContent = sisa.length ? `${ok} terkirim, ${sisa.length} gagal. Tekan kirim lagi untuk mengulang.` : `✅ ${ok} foto berhasil masuk ke spreadsheet.`;
+  if (!sisa.length) $("#cat").value = "";
+  loadGal();
+};
+</script>
+</body>
+</html>
