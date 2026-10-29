@@ -38,6 +38,11 @@ button:disabled{opacity:.55;cursor:default}
 .t{display:inline-block;font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:99px;margin-bottom:4px}
 .t.Before{background:#fff1d6;color:#9a6700}.t.After{background:#dff5ec;color:var(--ok)}
 .hide{display:none}
+.cap{font-size:.72rem;font-weight:700;color:var(--mut);margin:0 0 4px;text-transform:uppercase}
+.grp{margin-top:16px}.grp h3{font-size:.95rem;margin:0 0 6px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:10px}.cols .g{margin-bottom:8px}
+.prev b.rt{top:auto;bottom:3px;background:var(--pri)}
+.row button{width:100%;padding:13px}
 </style>
 </head>
 <body>
@@ -61,17 +66,19 @@ button:disabled{opacity:.55;cursor:default}
     <div><label for="tahap">Jenis Foto</label><select id="tahap"><option>Before</option><option>After</option></select></div>
     <div><label for="item">Item / Area</label><select id="item"></select></div>
   </div>
+  <div id="ref"></div>
   <label>Foto (bisa pilih lebih dari satu)</label>
   <div class="pick">📷 Ketuk untuk ambil foto / pilih dari galeri<input type="file" id="file" accept="image/*" multiple></div>
   <div class="prev" id="prev"></div>
+  <input type="file" id="re" accept="image/*" class="hide">
   <label for="cat">Catatan (opsional)</label><textarea id="cat" placeholder="Kondisi / temuan di area ini..."></textarea>
-  <div style="margin-top:12px"><button id="kirim">Kirim ke Spreadsheet</button></div>
+  <div class="row" style="margin-top:12px"><button class="sec" id="draft" type="button">💾 Simpan Draft</button><button id="kirim">Kirim ke Spreadsheet</button></div>
   <div id="bar"><i></i></div><div id="msg"></div>
 </div>
 
 <div class="box hide" id="gal">
   <div class="top"><h2 id="galT">Galeri</h2><button class="sec" id="reload">↻ Muat ulang</button></div>
-  <div class="grid" id="grid"></div>
+  <div id="grid"></div>
 </div>
 </main>
 <script>
@@ -109,9 +116,9 @@ $("#lokasi").onchange = () => {
   const l = $("#lokasi").value;
   $("#form").classList.toggle("hide", !l); $("#gal").classList.toggle("hide", !l);
   if (!l) return;
-  $("#item").innerHTML = LOKASI[l].map(i => `<option>${esc(i)}</option>`).join("");
+  fillItems(LOKASI[l][0]);
   $("#galT").textContent = "Galeri – " + l;
-  fotos = []; showPrev(); now(); loadGal();
+  GAL = []; $("#ref").innerHTML = ""; switchKey(); loadGal();
 };
 
 function compress(file, max = 1280, q = 0.72) {
@@ -135,7 +142,78 @@ $("#file").onchange = async e => {
   e.target.value = ""; showPrev();
 };
 function showPrev() {
-  $("#prev").innerHTML = fotos.map((f, i) => `<div><img src="${f}"><b onclick="fotos.splice(${i},1);showPrev()">×</b></div>`).join("");
+  $("#prev").innerHTML = fotos.map((f, i) => `<div><img src="${f}"><b onclick="fotos.splice(${i},1);showPrev()">×</b><b class="rt" onclick="retake(${i})">↻</b></div>`).join("")
+    + (fotos.length ? '<small style="grid-column:1/-1;color:var(--mut)">↻ ambil ulang foto • × hapus foto</small>' : "");
+}
+
+let GAL = [];
+const card = r => `<div class="g"><a href="${esc(r.link)}" target="_blank" rel="noopener"><img loading="lazy" src="https://drive.google.com/thumbnail?id=${esc(r.id)}&sz=w500" alt=""></a>
+  <div><span class="t ${esc(r.tahap)}">${esc(r.tahap)}</span><small>${esc(r.tanggal)} • ${esc(r.jam)} • ${esc(r.auditor)}</small>${r.catatan ? `<small>${esc(r.catatan)}</small>` : ""}</div></div>`;
+
+// Foto Before dari item yang dipilih, tampil di bawah form sebagai acuan
+function showRef() {
+  const it = $("#item").value, b = GAL.filter(r => r.item === it && r.tahap === "Before");
+  $("#ref").innerHTML = b.length
+    ? `<label>Foto Before – ${esc(it)}</label><div class="grid">${b.slice(0, 4).map(card).join("")}</div>`
+    : `<small style="color:var(--mut);display:block;margin-top:8px">Belum ada foto Before untuk item ini.</small>`;
+}
+// ---- Ambil ulang foto ----
+let reIdx = -1;
+function retake(i) { reIdx = i; $("#re").click(); }
+$("#re").onchange = async e => {
+  if (e.target.files[0] && reIdx >= 0) { fotos[reIdx] = await compress(e.target.files[0]); showPrev(); }
+  e.target.value = "";
+};
+
+// ---- Draft (tersimpan di perangkat ini, per lokasi + jenis foto + item) ----
+const DBP = new Promise((res, rej) => { const q = indexedDB.open("auditDraft", 1); q.onupgradeneeded = () => q.result.createObjectStore("d"); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+const idb = async (mode, fn) => { const db = await DBP; return new Promise((res, rej) => { const t = db.transaction("d", mode), r = fn(t.objectStore("d")); t.oncomplete = () => res(r.result); t.onerror = () => rej(t.error); }); };
+let cur = "", DR = new Set();
+idb("readonly", s => s.getAllKeys()).then(k => { DR = new Set(k); }).catch(() => {});
+const keyNow = () => [$("#lokasi").value, $("#tahap").value, $("#item").value].join("|");
+
+function fillItems(sel) {
+  const l = $("#lokasi").value, t = $("#tahap").value, v = sel || $("#item").value;
+  $("#item").innerHTML = (LOKASI[l] || []).map(i => `<option value="${esc(i)}">${esc(i)}${DR.has(l + "|" + t + "|" + i) ? " 💾" : ""}</option>`).join("");
+  $("#item").value = v; if (!$("#item").value) $("#item").selectedIndex = 0;
+}
+async function saveDraft(k = cur) {
+  if (!k || k.startsWith("|")) return false;
+  try {
+    if (fotos.length || $("#cat").value.trim()) {
+      await idb("readwrite", s => s.put({ tanggal: $("#tgl").value, jam: $("#jam").value, catatan: $("#cat").value, fotos }, k)); DR.add(k);
+    } else { await idb("readwrite", s => s.delete(k)); DR.delete(k); }
+    fillItems(); return true;
+  } catch (e) { console.error(e); return false; }
+}
+async function switchKey() {            // simpan draft item sebelumnya, muat draft item yang baru dipilih
+  await saveDraft(cur);
+  cur = keyNow(); fillItems();
+  let d = null; try { d = await idb("readonly", s => s.get(cur)); } catch (e) {}
+  fotos = d ? d.fotos : []; $("#cat").value = d ? d.catatan : "";
+  if (d) { $("#tgl").value = d.tanggal; $("#jam").value = d.jam; } else now();
+  showPrev(); showRef();
+  $("#msg").textContent = d ? "💾 Draft untuk item ini dimuat." : "";
+}
+$("#draft").onclick = async () => {
+  const ok = await saveDraft(keyNow());
+  $("#msg").textContent = ok ? "💾 Draft tersimpan di perangkat ini. Aman walau halaman ditutup." : "Belum ada foto/catatan untuk disimpan.";
+};
+document.addEventListener("visibilitychange", () => { if (document.hidden) saveDraft(); });
+$("#item").onchange = $("#tahap").onchange = switchKey;
+
+// Galeri per item: Before di kiri, After di kanan
+function showGal() {
+  const l = $("#lokasi").value;
+  const items = [...new Set([...(LOKASI[l] || []), ...GAL.map(r => r.item)])];
+  const html = items.map(it => {
+    const b = GAL.filter(r => r.item === it && r.tahap === "Before"), a = GAL.filter(r => r.item === it && r.tahap === "After");
+    if (!b.length && !a.length) return "";
+    return `<div class="grp"><h3>${esc(it)}</h3><div class="cols">
+      <div><p class="cap">Before</p>${b.map(card).join("") || "<small>Belum ada</small>"}</div>
+      <div><p class="cap">After</p>${a.map(card).join("") || "<small>Belum ada</small>"}</div></div></div>`;
+  }).join("");
+  $("#grid").innerHTML = html || "<small>Belum ada foto untuk lokasi ini.</small>";
 }
 
 async function loadGal() {
@@ -144,11 +222,7 @@ async function loadGal() {
   try {
     const j = await (await fetch(APPS_SCRIPT_URL + "?lokasi=" + encodeURIComponent(l))).json();
     if (!j.ok) throw new Error(j.error);
-    $("#grid").innerHTML = j.data.length ? j.data.map(r => `<div class="g">
-      <a href="${esc(r.link)}" target="_blank" rel="noopener"><img loading="lazy" src="https://drive.google.com/thumbnail?id=${esc(r.id)}&sz=w500" alt=""></a>
-      <div><span class="t ${esc(r.tahap)}">${esc(r.tahap)}</span><b> ${esc(r.item)}</b>
-      <small>${esc(r.tanggal)} • ${esc(r.jam)} • ${esc(r.auditor)}</small>${r.catatan ? `<small>${esc(r.catatan)}</small>` : ""}</div></div>`).join("")
-      : "<small>Belum ada foto untuk lokasi ini.</small>";
+    GAL = j.data; showGal(); showRef();
   } catch (e) { $("#grid").innerHTML = "<small>Gagal memuat galeri: " + esc(e.message) + "</small>"; }
 }
 $("#reload").onclick = loadGal;
@@ -173,6 +247,7 @@ $("#kirim").onclick = async () => {
   fotos = sisa; showPrev(); $("#kirim").disabled = false;
   msg.textContent = sisa.length ? `${ok} terkirim, ${sisa.length} gagal. Tekan kirim lagi untuk mengulang.` : `✅ ${ok} foto berhasil masuk ke spreadsheet.`;
   if (!sisa.length) $("#cat").value = "";
+  saveDraft();
   loadGal();
 };
 </script>
