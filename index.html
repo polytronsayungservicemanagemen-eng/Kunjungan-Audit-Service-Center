@@ -78,6 +78,8 @@ button:disabled{opacity:.55;cursor:default}
 
 <div class="box hide" id="gal">
   <div class="top"><h2 id="galT">Galeri</h2><button class="sec" id="reload">↻ Muat ulang</button></div>
+  <div class="row" style="margin-top:8px"><button class="sec" id="xl1">⬇ Excel lokasi ini</button><button class="sec" id="xlAll">⬇ Excel semua lokasi</button></div>
+  <small id="xlMsg" style="display:block;margin-top:6px;color:var(--mut)"></small>
   <div id="grid"></div>
 </div>
 </main>
@@ -150,7 +152,8 @@ function showPrev() {
 const IMG = {};
 function fotoUrl(id) {
   if (!IMG[id]) IMG[id] = fetch(APPS_SCRIPT_URL + "?foto=" + encodeURIComponent(id)).then(r => r.json())
-    .then(j => { if (!j.ok) throw new Error(j.error); return j.data; });
+    .then(j => { if (!j.ok) throw new Error(j.error); return j.data; })
+    .catch(e => { delete IMG[id]; throw e; });
   return IMG[id];
 }
 const io = new IntersectionObserver(es => es.forEach(e => {
@@ -243,6 +246,73 @@ async function loadGal() {
   } catch (e) { $("#grid").innerHTML = "<small>Gagal memuat galeri: " + esc(e.message) + "</small>"; }
 }
 $("#reload").onclick = loadGal;
+
+// ---- Unduh Excel dengan foto tertanam (pustaka ExcelJS dimuat saat tombol ditekan) ----
+const loadScript = src => new Promise((ok, no) => {
+  if (window.ExcelJS) return ok();
+  const s = document.createElement("script"); s.src = src; s.onload = ok;
+  s.onerror = () => no(new Error("Gagal memuat pustaka Excel (cek internet)")); document.head.appendChild(s);
+});
+const dim = u => new Promise(ok => { const i = new Image(); i.onload = () => ok({ w: i.naturalWidth, h: i.naturalHeight }); i.onerror = () => ok({ w: 4, h: 3 }); i.src = u; });
+
+async function dataLokasi(l) {            // satu baris per item: Before & After berpasangan
+  const j = await (await fetch(APPS_SCRIPT_URL + "?lokasi=" + encodeURIComponent(l))).json();
+  if (!j.ok) throw new Error(j.error);
+  const rec = j.data.slice().reverse();   // urut kronologis
+  const items = [...new Set([...(LOKASI[l] || []), ...rec.map(r => r.item)])], rows = [];
+  items.forEach(it => {
+    const b = rec.filter(r => r.item === it && r.tahap === "Before"), a = rec.filter(r => r.item === it && r.tahap === "After");
+    for (let k = 0; k < Math.max(b.length, a.length, 1); k++) rows.push({ item: it, b: b[k], a: a[k] });
+  });
+  return rows;
+}
+
+async function unduhExcel(daftar) {
+  const msg = $("#xlMsg"), btn = [$("#xl1"), $("#xlAll")];
+  btn.forEach(b => b.disabled = true);
+  try {
+    msg.textContent = "Menyiapkan…";
+    await loadScript("https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js");
+    const wb = new ExcelJS.Workbook(), x = (o, k) => o ? o[k] : "";
+    for (const l of daftar) {
+      msg.textContent = "Mengambil data " + l + "…";
+      const rows = await dataLokasi(l);
+      const ids = rows.flatMap(r => [r.b, r.a]).filter(Boolean).map(o => o.id);
+      for (let i = 0; i < ids.length; i += 4) {          // ambil foto 4 sekaligus
+        msg.textContent = `${l}: mengambil foto ${Math.min(i + 4, ids.length)}/${ids.length}…`;
+        await Promise.allSettled(ids.slice(i, i + 4).map(fotoUrl));
+      }
+      const ws = wb.addWorksheet(l.replace(/[\\\/?*\[\]:]/g, "-").slice(0, 31), { views: [{ state: "frozen", ySplit: 1 }] });
+      ws.columns = [["Item", 28], ["Foto Before", 46], ["Foto After", 46], ["Tgl Before", 12], ["Jam Before", 9], ["Auditor Before", 14],
+        ["Catatan Before", 32], ["Tgl After", 12], ["Jam After", 9], ["Auditor After", 14], ["Catatan After", 32]].map(([header, width]) => ({ header, width }));
+      ws.getRow(1).height = 24;
+      ws.getRow(1).eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0B5FFF" } }; c.font = { bold: true, color: { argb: "FFFFFFFF" } }; c.alignment = { vertical: "middle", wrapText: true }; });
+      for (const row of rows) {
+        const r = ws.addRow([row.item, "", "", x(row.b, "tanggal"), x(row.b, "jam"), x(row.b, "auditor"), x(row.b, "catatan"),
+                             x(row.a, "tanggal"), x(row.a, "jam"), x(row.a, "auditor"), x(row.a, "catatan")]);
+        r.height = 190; r.alignment = { vertical: "middle", wrapText: true };
+        for (const [o, col] of [[row.b, 1], [row.a, 2]]) {
+          if (!o) continue;
+          let u = null; try { u = await fotoUrl(o.id); } catch (e) {}
+          if (!u) { r.getCell(col + 1).value = "(foto gagal dimuat)"; continue; }
+          const d = await dim(u), s = Math.min(315 / d.w, 240 / d.h);
+          const id = wb.addImage({ base64: u, extension: /image\/png/.test(u) ? "png" : "jpeg" });
+          ws.addImage(id, { tl: { col: col + 0.04, row: r.number - 1 + 0.04 }, ext: { width: d.w * s, height: d.h * s }, editAs: "oneCell" });
+        }
+      }
+    }
+    msg.textContent = "Menyusun file Excel…";
+    const buf = await wb.xlsx.writeBuffer();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    a.download = "Laporan_Audit_" + (daftar.length > 1 ? "Semua_Lokasi" : daftar[0]) + "_" + new Date().toISOString().slice(0, 10) + ".xlsx";
+    document.body.appendChild(a); a.click(); a.remove();
+    msg.textContent = "✅ File Excel selesai dibuat.";
+  } catch (e) { msg.textContent = "Gagal: " + e.message; console.error(e); }
+  btn.forEach(b => b.disabled = false);
+}
+$("#xl1").onclick = () => unduhExcel([$("#lokasi").value]);
+$("#xlAll").onclick = () => unduhExcel(Object.keys(LOKASI));
 
 $("#kirim").onclick = async () => {
   const msg = $("#msg"), auditor = $("#auditor").value.trim();
